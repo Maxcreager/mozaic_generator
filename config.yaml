@@ -1,0 +1,12 @@
+# config.yaml
+model:
+  proto: "models/deploy.prototxt"
+  weights: "models/mobilenet_iter_73000.caffemodel"
+logging:
+  level: "DEBUG"
+  filename: "error_log.txt"
+page_sizes:
+  A3: [11.7, 16.5]
+  A4: [8.27, 11.7]
+  A5: [5.83, 8.27]
+  A6: [4.13, 5.83]
