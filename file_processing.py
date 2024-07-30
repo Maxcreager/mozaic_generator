@@ -1,6 +1,7 @@
 import os
 import random
 import logging
+import cv2
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from image_processing import extract_frame, is_image_file, is_video_file
 
@@ -28,10 +29,36 @@ def process_files(input_folder, output_folder, num_images=None):
             elif is_image_file(file_path):
                 image_files.append(file_path)
         for future in as_completed(futures):
-            result = future.result()
-            if result:
-                image_files.append(result)
+            try:
+                result = future.result()
+                if result:
+                    image_files.append(result)
+            except Exception as e:
+                logging.error(f"Exception during processing: {e}")
         executor.shutdown(wait=True)
 
     logging.debug(f"Processed {len(image_files)} image files / {len(image_files)} fichiers image traités.")
     return image_files
+
+def extract_frame(data):
+    """Extract a random frame from a video and handle opening and reading errors / Extraire une image aléatoire d'une vidéo et gérer les erreurs d'ouverture et de lecture."""
+    video_path, output_path = data
+    try:
+        video = cv2.VideoCapture(video_path)
+        if not video.isOpened():
+            logging.error(f"Error opening video file: {video_path}")
+            return None
+        total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        random_frame = random.randint(0, total_frames - 1)
+        video.set(cv2.CAP_PROP_POS_FRAMES, random_frame)
+        success, image = video.read()
+        video.release()
+        if success:
+            cv2.imwrite(output_path, image)
+            return output_path
+        else:
+            logging.error(f"Failed to extract frame from video: {video_path}")
+            return None
+    except Exception as e:
+        logging.error(f"Exception while processing video {video_path}: {e}")
+        return None

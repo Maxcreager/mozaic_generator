@@ -49,7 +49,7 @@ def main(args):
         if args.page_format:
             create_segmented_mosaic(image_files, args.cols, args.output, args.page_format, args.dpi, PAGE_SIZES, NET, CLASSES)
         else:
-            create_single_mosaic(image_files, args.cols, args.output, NET, CLASSES)
+            create_single_mosaic(image_files, args.cols, args.output, NET, CLASSES, max_dim=65500)
     else:
         logging.error("No valid image files found to create a mosaic / Aucun fichier image valide trouvé pour créer une mosaïque.")
 

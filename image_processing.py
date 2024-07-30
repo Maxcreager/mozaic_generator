@@ -10,7 +10,7 @@ def is_image_file(filename):
     return filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tiff'))
 
 def is_video_file(filename):
-    """Check if a file is a video based on its extension / Vérifier si un fichier est une vidéo en fonction de son extension."""
+    """Check if a file is une vidéo based on its extension / Vérifier si un fichier est une vidéo en fonction de son extension."""
     return filename.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.flv', '.wmv', '.webm'))
 
 def extract_frame(data):
@@ -36,43 +36,74 @@ def extract_frame(data):
         logging.error(f"Exception while processing video {video_path}: {e}")
         return None
 
-def detect_and_crop(image_path, net, classes, target_class="person", confidence_threshold=0.5):
-    """Detect the main object in the image and crop it accordingly / Détecter l'objet principal dans l'image et le recadrer en conséquence."""
-    image = cv2.imread(image_path)
-    if image is None:
-        logging.error(f"Failed to load image {image_path}")
-        return
+def detect_and_crop(image_path, net, classes, target_class="person", confidence_threshold=0.5, min_size=50, margin=20):
+    """Detect the main object in the image and crop it accordingly, prioritizing persons / Détecter l'objet principal dans l'image et le recadrer en conséquence, en donnant la priorité aux personnes."""
+    try:
+        image = cv2.imread(image_path)
+        if image is None:
+            logging.error(f"Failed to load image {image_path}")
+            return
 
-    (h, w) = image.shape[:2]
-    blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 0.007843, (300, 300), 127.5)
-    
-    net.setInput(blob)
-    detections = net.forward()
-    
-    max_confidence = 0
-    box = None
-    
-    for i in range(detections.shape[2]):
-        confidence = detections[0, 0, i, 2]
+        (h, w) = image.shape[:2]
+        blob = cv2.dnn.blobFromImage(cv2.resize(image, (300, 300)), 0.007843, (300, 300), 127.5)
         
-        if confidence > confidence_threshold:
-            idx = int(detections[0, 0, i, 1])
-            if classes[idx] == target_class:
-                if confidence > max_confidence:
-                    max_confidence = confidence
-                    box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-    
-    if box is not None:
+        net.setInput(blob)
+        detections = net.forward()
+        
+        person_box = None
+        person_confidence = 0
+        other_boxes = []
+
+        for i in range(detections.shape[2]):
+            confidence = detections[0, 0, i, 2]
+            
+            if confidence > confidence_threshold:
+                idx = int(detections[0, 0, i, 1])
+                if idx < len(classes):
+                    if classes[idx] == target_class:
+                        if confidence > person_confidence:
+                            person_confidence = confidence
+                            person_box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+                    else:
+                        other_boxes.append((confidence, detections[0, 0, i, 3:7] * np.array([w, h, w, h])))
+                else:
+                    logging.warning(f"Detection index {idx} out of range for classes list.")
+        
+        if person_box is not None:
+            box = person_box
+        elif other_boxes:
+            box = max(other_boxes, key=lambda x: x[0])[1]
+        else:
+            # If no objects are detected, use the entire image
+            logging.warning(f"No valid detections for image {image_path}, using entire image for cropping.")
+            box = np.array([0, 0, w, h])
+
+        # Check for NaN or infinite values
+        if np.any(np.isnan(box)) or np.any(np.isinf(box)):
+            logging.error(f"Invalid box coordinates (NaN or inf) for image {image_path}: {box}")
+            box = np.array([0, 0, w, h])  # Use the entire image if the box is invalid
+
         (startX, startY, endX, endY) = box.astype("int")
+
+        # Ensure coordinates are within image dimensions
+        startX = max(0, min(startX, w))
+        startY = max(0, min(startY, h))
+        endX = max(0, min(endX, w))
+        endY = max(0, min(endY, h))
+
+        # Check for invalid box dimensions
+        if startX >= endX or startY >= endY:
+            logging.error(f"Invalid crop box for image {image_path}: {startX}, {startY}, {endX}, {endY}")
+            startX, startY, endX, endY = 0, 0, w, h  # Use the entire image if the crop box is invalid
 
         # Center of the bounding box
         centerX = (startX + endX) // 2
         centerY = (startY + endY) // 2
         
-        # Determine the size of the largest square
+        # Determine the size of the largest square, with a minimum size
         box_width = endX - startX
         box_height = endY - startY
-        max_dim = max(box_width, box_height)  # Use the largest dimension
+        max_dim = max(box_width, box_height, min_size) + margin  # Use the largest dimension and add margin
         
         # Compute the coordinates of the square
         half_dim = max_dim // 2
@@ -86,15 +117,20 @@ def detect_and_crop(image_path, net, classes, target_class="person", confidence_
             logging.error(f"Cropping resulted in an empty image for {image_path}")
         else:
             cv2.imwrite(image_path, cropped_image)
-    else:
-        logging.info(f"No main object found in image {image_path}")
+            logging.info(f"Image cropped successfully: {image_path}")
+    except cv2.error as e:
+        logging.error(f"OpenCV error occurred for image {image_path}: {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error occurred for image {image_path}: {e}")
+
 
 def resize_to_square(image_path, size):
     """Resize the cropped image to a square of the given size / Redimensionner l'image recadrée en un carré de la taille donnée."""
     try:
         img = Image.open(image_path)
-        img = ImageOps.fit(img, (size, size), Image.ANTIALIAS)
+        img = ImageOps.fit(img, (size, size), Image.Resampling.LANCZOS)
         img.save(image_path)
+        logging.info(f"Image resized successfully: {image_path}")
     except Exception as e:
         logging.error(f"Failed to resize image {image_path} to square: {e}")
 
